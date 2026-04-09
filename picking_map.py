@@ -53,49 +53,49 @@ try:
     location_rank = df_mapped_only['location'].value_counts().reset_index()
     location_rank.columns = ['Location', 'Picks']
 
-    # --- 6. GRID MAPPING ---
+    # --- 6. GRID MAPPING (THE "CLEAN" FIX) ---
     if df_lvl_bp.empty:
         st.error(f"No coordinates found for {selected_level}")
     else:
         max_r, max_c = int(df_lvl_bp['grid_row'].max() + 1), int(df_lvl_bp['grid_col'].max() + 1)
+        # We start with NaNs (Not a Number) so empty areas stay transparent
         color_grid = np.full((max_r, max_c), np.nan)
         
         for _, row in df_lvl_bp.iterrows():
             r, c = int(row['grid_row']), int(row['grid_col'])
             m_key = row['match_key']
-            # We assign 0 if no picks, which will map to our neutral color
-            color_grid[r, c] = bay_counts.get(m_key, 0)
+            count = bay_counts.get(m_key, 0)
+            
+            # --- CRITICAL CHANGE ---
+            # If count is 0, we leave it as NaN so it doesn't get a border or a color
+            if count > 0:
+                color_grid[r, c] = count
 
         # --- 7. VISUALIZATION ---
         st.title(f"Picking Velocity: {selected_level} ({selected_client})")
         
-        # Scale Logic
-        max_val = max(bay_counts.values()) if bay_counts else 0
-        # Force vmax to be at least 1 to prevent color-stretching bugs
-        vmax_limit = max(max_val, 1)
-
+        max_val = max(bay_counts.values()) if bay_counts else 1
+        
         fig, ax = plt.subplots(figsize=(25, 12), facecolor='none')
         ax.set_facecolor('none')
         
-        # --- NEW COLOR PALETTE ---
-        # First color (#e0e0e0) is for 0 picks (Light Gray)
-        # Remaining colors create a "Heat" gradient for 1+ picks
-        colors = ["#e0e0e0", "#2ecc71", "#f1c40f", "#e67e22", "#e74c3c"]
-        cmap = mcolors.LinearSegmentedColormap.from_list("custom_heat", colors, N=256)
+        # New Gradient: Green (Low) to Red (High) - Gray is gone!
+        colors = ["#2ecc71", "#f1c40f", "#e67e22", "#e74c3c"]
+        cmap = mcolors.LinearSegmentedColormap.from_list("velocity", colors, N=256)
         
         sns.heatmap(
             color_grid, 
             cmap=cmap, 
             cbar=True,
-            linewidths=0.5, 
-            linecolor='white', # White grid lines look cleaner for picking maps
-            vmin=0, 
-            vmax=vmax_limit, 
-            mask=np.isnan(color_grid), 
+            linewidths=1, # Borders only show where there is data
+            linecolor='black', 
+            vmin=1, # Ensure the scale starts at 1 pick
+            vmax=max_val, 
+            mask=np.isnan(color_grid), # Hide everything that is NaN
             ax=ax
         )
 
-        # Labels
+        # Labels - We keep labels for all blueprint bays so you know where you are
         processed_labels = set()
         for _, row in df_lvl_bp.iterrows():
             r, c = int(row['grid_row']), int(row['grid_col'])
