@@ -48,53 +48,45 @@ try:
     df_work['bay_key'] = df_work['bay'].apply(sanitize)
     df_mapped_only = df_work[df_work['bay_key'].isin(valid_map_bays)].copy()
 
-    # --- 5. CALCULATIONS ---
-    bay_counts = df_mapped_only['bay_key'].value_counts().to_dict()
-    location_rank = df_mapped_only['location'].value_counts().reset_index()
-    location_rank.columns = ['Location', 'Picks']
+    # --- 5. CALCULATIONS FOR SUMMARY ---
+    # Top 15 Bays
+    bay_rank = df_mapped_only['bay'].value_counts().reset_index()
+    bay_rank.columns = ['Bay', 'Picks']
+    
+    # Top 15 Locations
+    loc_rank = df_mapped_only['location'].value_counts().reset_index()
+    loc_rank.columns = ['Location', 'Picks']
+    
+    # Top Clients (on this floor)
+    client_rank = df_mapped_only['client_name'].value_counts().reset_index()
+    client_rank.columns = ['Client', 'Picks']
 
-    # --- 6. GRID MAPPING (NEUTRAL GRID FIX) ---
+    # --- 6. GRID MAPPING ---
     if df_lvl_bp.empty:
         st.error(f"No coordinates found for {selected_level}")
     else:
         max_r, max_c = int(df_lvl_bp['grid_row'].max() + 1), int(df_lvl_bp['grid_col'].max() + 1)
-        # We start with NaNs for non-bay areas (whitespace)
         color_grid = np.full((max_r, max_c), np.nan)
         
+        bay_counts_dict = df_mapped_only['bay_key'].value_counts().to_dict()
+        
         for _, row in df_lvl_bp.iterrows():
-            r, c = int(row['grid_row']), int(row['grid_col'])
-            m_key = row['match_key']
-            # We assign at least 0.001 to distinguish "Empty Bay" from "Whitespace"
-            count = bay_counts.get(m_key, 0)
+            r, c, m_key = int(row['grid_row']), int(row['grid_col']), row['match_key']
+            count = bay_counts_dict.get(m_key, 0)
             color_grid[r, c] = count if count > 0 else 0.001
 
         # --- 7. VISUALIZATION ---
         st.title(f"Picking Velocity: {selected_level} ({selected_client})")
         
-        max_val = max(bay_counts.values()) if bay_counts else 1
-
+        max_val = max(bay_counts_dict.values()) if bay_counts_dict else 1
         fig, ax = plt.subplots(figsize=(25, 12), facecolor='none')
         ax.set_facecolor('none')
         
-        # --- CUSTOM COLORMAP ---
-        # 0.000 is for Neutral Gray (#f2f2f2)
-        # 1.000+ starts the heat gradient
         colors = ["#f2f2f2", "#2ecc71", "#f1c40f", "#e67e22", "#e74c3c"]
         cmap = mcolors.LinearSegmentedColormap.from_list("velocity", colors, N=256)
         
-        sns.heatmap(
-            color_grid, 
-            cmap=cmap, 
-            cbar=True,
-            linewidths=0.2, # Very thin lines
-            linecolor='#dddddd', # Soft gray lines
-            vmin=0, 
-            vmax=max_val, 
-            mask=np.isnan(color_grid), 
-            ax=ax
-        )
+        sns.heatmap(color_grid, cmap=cmap, cbar=True, linewidths=0.2, linecolor='#dddddd', vmin=0, vmax=max_val, mask=np.isnan(color_grid), ax=ax)
 
-        # Labels
         processed_labels = set()
         for _, row in df_lvl_bp.iterrows():
             r, c = int(row['grid_row']), int(row['grid_col'])
@@ -106,10 +98,28 @@ try:
         plt.axis('off')
         st.pyplot(fig, use_container_width=True)
 
-        # --- 8. TOP LOCATIONS LIST ---
+        # --- 8. THE SUMMARY DASHBOARD ---
         st.markdown("---")
-        st.subheader(f"🏆 Top 15 Picked Locations ({selected_client})")
-        st.dataframe(location_rank.head(15), use_container_width=True, hide_index=True)
+        st.subheader(f"📑 Activity Summary: {selected_level}")
+        
+        sum_col1, sum_col2, sum_col3 = st.columns(3)
+        
+        with sum_col1:
+            st.markdown("### 🏟️ Top 15 Bays")
+            st.write("*(Aggregated heat map zones)*")
+            st.dataframe(bay_rank.head(15), use_container_width=True, hide_index=True)
+            
+        with sum_col2:
+            st.markdown("### 📍 Top 15 Locations")
+            st.write("*(Specific pick faces)*")
+            st.dataframe(loc_rank.head(15), use_container_width=True, hide_index=True)
+            
+        with sum_col3:
+            st.markdown("### 👤 Top Clients")
+            st.write("*(Most active owners on this floor)*")
+            if selected_client != "All Clients":
+                st.info(f"Filtered for **{selected_client}**")
+            st.dataframe(client_rank.head(15), use_container_width=True, hide_index=True)
 
 except Exception as e:
     st.error(f"Error: {e}")
