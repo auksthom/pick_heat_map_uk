@@ -53,55 +53,54 @@ try:
     location_rank = df_mapped_only['location'].value_counts().reset_index()
     location_rank.columns = ['Location', 'Picks']
 
-    # --- 6. GRID MAPPING (THE "CLEAN" FIX) ---
+    # --- 6. GRID MAPPING (NEUTRAL GRID FIX) ---
     if df_lvl_bp.empty:
         st.error(f"No coordinates found for {selected_level}")
     else:
         max_r, max_c = int(df_lvl_bp['grid_row'].max() + 1), int(df_lvl_bp['grid_col'].max() + 1)
-        # We start with NaNs (Not a Number) so empty areas stay transparent
+        # We start with NaNs for non-bay areas (whitespace)
         color_grid = np.full((max_r, max_c), np.nan)
         
         for _, row in df_lvl_bp.iterrows():
             r, c = int(row['grid_row']), int(row['grid_col'])
             m_key = row['match_key']
+            # We assign at least 0.001 to distinguish "Empty Bay" from "Whitespace"
             count = bay_counts.get(m_key, 0)
-            
-            # --- CRITICAL CHANGE ---
-            # If count is 0, we leave it as NaN so it doesn't get a border or a color
-            if count > 0:
-                color_grid[r, c] = count
+            color_grid[r, c] = count if count > 0 else 0.001
 
         # --- 7. VISUALIZATION ---
         st.title(f"Picking Velocity: {selected_level} ({selected_client})")
         
         max_val = max(bay_counts.values()) if bay_counts else 1
-        
+
         fig, ax = plt.subplots(figsize=(25, 12), facecolor='none')
         ax.set_facecolor('none')
         
-        # New Gradient: Green (Low) to Red (High) - Gray is gone!
-        colors = ["#2ecc71", "#f1c40f", "#e67e22", "#e74c3c"]
+        # --- CUSTOM COLORMAP ---
+        # 0.000 is for Neutral Gray (#f2f2f2)
+        # 1.000+ starts the heat gradient
+        colors = ["#f2f2f2", "#2ecc71", "#f1c40f", "#e67e22", "#e74c3c"]
         cmap = mcolors.LinearSegmentedColormap.from_list("velocity", colors, N=256)
         
         sns.heatmap(
             color_grid, 
             cmap=cmap, 
             cbar=True,
-            linewidths=1, # Borders only show where there is data
-            linecolor='black', 
-            vmin=1, # Ensure the scale starts at 1 pick
+            linewidths=0.2, # Very thin lines
+            linecolor='#dddddd', # Soft gray lines
+            vmin=0, 
             vmax=max_val, 
-            mask=np.isnan(color_grid), # Hide everything that is NaN
+            mask=np.isnan(color_grid), 
             ax=ax
         )
 
-        # Labels - We keep labels for all blueprint bays so you know where you are
+        # Labels
         processed_labels = set()
         for _, row in df_lvl_bp.iterrows():
             r, c = int(row['grid_row']), int(row['grid_col'])
             clean_label = re.sub(r'\d+$', '', str(row['bay_name'])).rstrip('-').strip()
             if f"{clean_label}_{c}" not in processed_labels:
-                ax.text(c + 0.5, r - 0.7, clean_label, ha='center', va='bottom', color='#888888', weight='bold', fontsize=10)
+                ax.text(c + 0.5, r - 0.7, clean_label, ha='center', va='bottom', color='#aaaaaa', weight='bold', fontsize=9)
                 processed_labels.add(f"{clean_label}_{c}")
 
         plt.axis('off')
