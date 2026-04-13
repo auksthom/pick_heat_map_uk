@@ -5,7 +5,7 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 import re
-from datetime import datetime
+from datetime import datetime, date
 
 # --- 1. CONFIGURATION ---
 st.set_page_config(layout="wide", page_title="UK FC Picking Velocity Map")
@@ -22,6 +22,11 @@ def load_picking_data():
     df_raw = pd.read_csv(f"{RAW_URL}&t={t}")
     df_bp = pd.read_csv('master_blueprint.csv')
     df_raw.columns = df_raw.columns.str.strip().str.replace(' ', '_').str.lower()
+    
+    # Ensure the date column is in datetime format
+    if 'date' in df_raw.columns:
+        df_raw['date'] = pd.to_datetime(df_raw['date'], errors='coerce')
+    
     return df_bp, df_raw
 
 try:
@@ -31,33 +36,59 @@ try:
         return re.sub(r'[^A-Z0-9]', '', str(text)).upper()
 
     # --- 3. FILTERS ---
+    # A. Client Filter
     client_list = ["All Clients"] + sorted(df_raw_data['client_name'].dropna().unique().tolist())
     selected_client = st.sidebar.selectbox("Filter by Client", client_list)
+    
+    # B. Date Range Filter
+    if 'date' in df_raw_data.columns and not df_raw_data['date'].isnull().all():
+        min_date = df_raw_data['date'].min().date()
+        max_date = df_raw_data['date'].max().date()
+        
+        st.sidebar.markdown("---")
+        selected_date_range = st.sidebar.date_input(
+            "Select Date Range",
+            value=(min_date, max_date),
+            min_value=min_date,
+            max_value=max_date
+        )
+    else:
+        st.sidebar.warning("No 'date' column found in data.")
+        selected_date_range = None
+
+    # C. Level Filter
     selected_level = st.sidebar.selectbox("Select Floor View", ["Level 1", "Level 2", "Level 3", "Level 4", "Level 5"])
 
-    # --- 4. DATA PREP ---
+    # --- 4. DATA PREP & FILTERING ---
+    # Level filtering for blueprint
     df_lvl_bp = df_blueprint[df_blueprint['level'].astype(str).str.contains(selected_level, case=False)].copy()
     df_lvl_bp['match_key'] = df_lvl_bp['bay_name'].apply(sanitize)
     valid_map_bays = set(df_lvl_bp['match_key'].unique())
 
+    # Apply Client Filter
     if selected_client != "All Clients":
         df_work = df_raw_data[df_raw_data['client_name'] == selected_client].copy()
     else:
         df_work = df_raw_data.copy()
 
+    # Apply Date Range Filter
+    if selected_date_range and len(selected_date_range) == 2:
+        start_date, end_date = selected_date_range
+        df_work = df_work[
+            (df_work['date'].dt.date >= start_date) & 
+            (df_work['date'].dt.date <= end_date)
+        ]
+
     df_work['bay_key'] = df_work['bay'].apply(sanitize)
     df_mapped_only = df_work[df_work['bay_key'].isin(valid_map_bays)].copy()
 
     # --- 5. CALCULATIONS FOR SUMMARY ---
-    # Top 15 Bays
     bay_rank = df_mapped_only['bay'].value_counts().reset_index()
     bay_rank.columns = ['Bay', 'Picks']
     
-    # Top 15 Locations
     loc_rank = df_mapped_only['location'].value_counts().reset_index()
     loc_rank.columns = ['Location', 'Picks']
     
-    # Top Clients (on this floor)
     client_rank = df_mapped_only['client_name'].value_counts().reset_index()
     client_rank.columns = ['Client', 'Picks']
 
@@ -77,6 +108,10 @@ try:
 
         # --- 7. VISUALIZATION ---
         st.title(f"Picking Velocity: {selected_level} ({selected_client})")
+        
+        # Display the currently selected date range in the header
+        if selected_date_range and len(selected_date_range) == 2:
+            st.write(f"📅 **Showing picks from {selected_date_range[0]} to {selected_date_range[1]}**")
         
         max_val = max(bay_counts_dict.values()) if bay_counts_dict else 1
         fig, ax = plt.subplots(figsize=(25, 12), facecolor='none')
@@ -106,19 +141,14 @@ try:
         
         with sum_col1:
             st.markdown("### 🏟️ Top 15 Bays")
-            st.write("*(Aggregated heat map zones)*")
             st.dataframe(bay_rank.head(15), use_container_width=True, hide_index=True)
             
         with sum_col2:
             st.markdown("### 📍 Top 15 Locations")
-            st.write("*(Specific pick faces)*")
             st.dataframe(loc_rank.head(15), use_container_width=True, hide_index=True)
             
         with sum_col3:
             st.markdown("### 👤 Top Clients")
-            st.write("*(Most active owners on this floor)*")
-            if selected_client != "All Clients":
-                st.info(f"Filtered for **{selected_client}**")
             st.dataframe(client_rank.head(15), use_container_width=True, hide_index=True)
 
 except Exception as e:
